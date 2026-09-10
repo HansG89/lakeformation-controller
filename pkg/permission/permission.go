@@ -190,6 +190,34 @@ func SDKPermissionsToStrings(permissions []svcsdktypes.Permission) []*string {
 	return out
 }
 
+// PermissionsCovered reports whether latest already grants everything in
+// desired, treating PermissionAll in latest as covering every desired
+// permission. Call once for Permissions and once for
+// PermissionsWithGrantOption - ALL on one does not imply ALL on the other.
+func PermissionsCovered(desired, latest []*string) bool {
+	for _, l := range latest {
+		if l != nil && *l == string(svcsdktypes.PermissionAll) {
+			return true
+		}
+	}
+	for _, d := range desired {
+		if d == nil {
+			continue
+		}
+		covered := false
+		for _, l := range latest {
+			if l != nil && *l == *d {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
 // MatchPrincipal scans a ListPermissions response for the explicit grant row
 // for principalARN, skipping RAM-share-derived entries.
 //

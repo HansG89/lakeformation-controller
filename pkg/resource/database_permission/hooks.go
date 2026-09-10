@@ -53,7 +53,9 @@ func (rm *resourceManager) customUpdateDatabasePermission(
 
 // matchAndApplyPermissions finds the ListPermissions row for principalARN
 // and overwrites ko's Principal/Resource/Condition/Permissions/
-// PermissionsWithGrantOption from it. Returns whether a match was found.
+// PermissionsWithGrantOption from it. matched reports whether a row was
+// found; bypassUnmanaged reports whether the caller should treat this as
+// NotFound instead.
 //
 // Must overwrite Principal/Resource/Condition too, not just the permission
 // lists: the generated code before this hook point copies those fields from
@@ -61,6 +63,18 @@ func (rm *resourceManager) customUpdateDatabasePermission(
 // include other principals on the same resource) - left uncorrected,
 // ackcompare sees a false identity change and Update takes the
 // revoke+regrant path against the wrong principal (reproduced live).
+//
+// bypassUnmanaged is true only on a CR's first-ever reconcile (no
+// ACKResourceMetadata yet), with no Condition on either side, when the
+// matched row already covers everything desired - e.g. the resource
+// creator's implicit ALL grant, or IAM_ALLOWED_PRINCIPALS' default ALL
+// grant under hybrid access mode. Without this, such a CR's first reconcile
+// hits ACK.Terminal "already exists, not managed by ACK" before any AWS
+// call (reproduced live), since the runtime treats any sdkFind match as a
+// pre-existing foreign resource unless the CR already has a finalizer.
+// Bypassing lets the normal Create path run instead, issuing a real,
+// additive GrantPermissions call. Any non-covering match, a Condition on
+// either side, or a later reconcile keeps today's Terminal behavior.
 //
 // Wrapping this in an rm method (instead of calling pkg/permission from the
 // hook template directly) sidesteps a goimports limitation: build-controller.sh's
@@ -74,21 +88,29 @@ func (rm *resourceManager) matchAndApplyPermissions(
 	resourceSpec *svcapitypes.Resource,
 	perms []svcsdktypes.PrincipalResourcePermissions,
 	principalARN string,
-) bool {
-	matched, ok := permission.MatchPrincipal(perms, principalARN)
+	firstReconcile bool,
+	desiredCondition *svcapitypes.Condition,
+	desiredPermissions, desiredGrantable []*string,
+) (matched bool, bypassUnmanaged bool) {
+	elem, ok := permission.MatchPrincipal(perms, principalARN)
 	if !ok {
-		return false
+		return false, false
+	}
+	if firstReconcile && desiredCondition == nil && elem.Condition == nil &&
+		permission.PermissionsCovered(desiredPermissions, permission.SDKPermissionsToStrings(elem.Permissions)) &&
+		permission.PermissionsCovered(desiredGrantable, permission.SDKPermissionsToStrings(elem.PermissionsWithGrantOption)) {
+		return true, true
 	}
 	ko.Spec.Principal = principal.DeepCopy()
 	ko.Spec.Resource = resourceSpec.DeepCopy()
-	if matched.Condition != nil {
-		ko.Spec.Condition = &svcapitypes.Condition{Expression: matched.Condition.Expression}
+	if elem.Condition != nil {
+		ko.Spec.Condition = &svcapitypes.Condition{Expression: elem.Condition.Expression}
 	} else {
 		ko.Spec.Condition = nil
 	}
-	ko.Spec.Permissions = permission.SDKPermissionsToStrings(matched.Permissions)
-	ko.Spec.PermissionsWithGrantOption = permission.SDKPermissionsToStrings(matched.PermissionsWithGrantOption)
-	return true
+	ko.Spec.Permissions = permission.SDKPermissionsToStrings(elem.Permissions)
+	ko.Spec.PermissionsWithGrantOption = permission.SDKPermissionsToStrings(elem.PermissionsWithGrantOption)
+	return true, false
 }
 
 // setSelfHealAdvisory sets the shared self-heal Advisory condition on ko.

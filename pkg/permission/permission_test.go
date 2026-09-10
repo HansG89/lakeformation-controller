@@ -146,6 +146,24 @@ func TestMatchPrincipal_EmptyPrincipalARN(t *testing.T) {
 	}
 }
 
+func TestPermissionsCovered_CreatorImplicitAllGrant(t *testing.T) {
+	if !PermissionsCovered(strPtrSlice("SELECT", "DESCRIBE"), strPtrSlice("ALL")) {
+		t.Fatal("expected ALL to cover any desired permission list")
+	}
+}
+
+func TestPermissionsCovered_IAMAllowedPrincipalsDefaultAllGrant(t *testing.T) {
+	if !PermissionsCovered(strPtrSlice("DESCRIBE"), strPtrSlice("ALL")) {
+		t.Fatal("expected ALL to cover DESCRIBE")
+	}
+}
+
+func TestPermissionsCovered_NotASuperset(t *testing.T) {
+	if PermissionsCovered(strPtrSlice("SELECT"), strPtrSlice("DESCRIBE", "ALTER")) {
+		t.Fatal("expected no coverage: latest lacks SELECT and has no ALL")
+	}
+}
+
 type fakeClient struct {
 	grantCalls  []*svcsdk.GrantPermissionsInput
 	revokeCalls []*svcsdk.RevokePermissionsInput

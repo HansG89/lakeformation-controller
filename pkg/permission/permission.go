@@ -17,14 +17,10 @@ package permission
 
 import (
 	"context"
-	"fmt"
 
-	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
-	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	svcsdk "github.com/aws/aws-sdk-go-v2/service/lakeformation"
 	svcsdktypes "github.com/aws/aws-sdk-go-v2/service/lakeformation/types"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // client is the subset of *lakeformation.Client used by this package.
@@ -89,34 +85,25 @@ func Diff(desired, latest []*string) (added, removed []*string) {
 // repeated grants merge, revoke leaves the rest untouched, and Permissions
 // vs PermissionsWithGrantOption toggle independently (verified live).
 //
-// If identityChanged, oldTarget is fully revoked and newTarget fully
-// granted (a changed Principal/Resource is a different grant record, not a
-// mutation). Otherwise each list is diffed against newTarget and only the
-// delta is touched, avoiding a no-access window on purely additive changes.
+// Each list is diffed against target and only the delta is touched,
+// avoiding a no-access window on purely additive changes. Assumes target's
+// identity (Principal/Resource) can't change between desired and latest -
+// enforced by marking those fields immutable at the CRD level.
 func UpdatePermissions(
 	ctx context.Context,
 	c client,
 	mr metricsRecorder,
-	identityChanged bool,
-	oldTarget GrantTarget,
-	newTarget GrantTarget,
+	target GrantTarget,
 	desiredPermissions, latestPermissions []*string,
 	desiredGrantable, latestGrantable []*string,
 ) error {
-	if identityChanged {
-		if err := revoke(ctx, c, mr, oldTarget, latestPermissions, latestGrantable); err != nil {
-			return err
-		}
-		return grant(ctx, c, mr, newTarget, desiredPermissions, desiredGrantable)
-	}
-
 	addedPermissions, removedPermissions := Diff(desiredPermissions, latestPermissions)
 	addedGrantable, removedGrantable := Diff(desiredGrantable, latestGrantable)
 
-	if err := revoke(ctx, c, mr, newTarget, removedPermissions, removedGrantable); err != nil {
+	if err := revoke(ctx, c, mr, target, removedPermissions, removedGrantable); err != nil {
 		return err
 	}
-	return grant(ctx, c, mr, newTarget, addedPermissions, addedGrantable)
+	return grant(ctx, c, mr, target, addedPermissions, addedGrantable)
 }
 
 // grant calls GrantPermissions for target, scoped to just the given
@@ -247,21 +234,4 @@ func MatchPrincipal(
 		return elem, true
 	}
 	return svcsdktypes.PrincipalResourcePermissions{}, false
-}
-
-// SetSelfHealAdvisory sets an Advisory condition indicating that a Create
-// call is recreating a grant that unexpectedly vanished from AWS (deleted by
-// another *Permission CR's Revoke, manual console action, etc.), rather than
-// creating one for the first time. resourceKind is the CRD kind name (e.g.
-// "DatabasePermission") used in the condition message.
-func SetSelfHealAdvisory(subject acktypes.ConditionManager, resourceKind string) {
-	ackcondition.SetAdvisory(
-		subject,
-		corev1.ConditionTrue,
-		aws.String(fmt.Sprintf(
-			"This grant was not found in AWS and has been recreated. If more than one %s resource targets the same principal and resource, one of them may be revoking permissions the other manages.",
-			resourceKind,
-		)),
-		aws.String("SELF_HEALED_RECREATE"),
-	)
 }

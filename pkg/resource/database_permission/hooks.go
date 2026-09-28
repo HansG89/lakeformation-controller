@@ -34,13 +34,8 @@ func (rm *resourceManager) customUpdateDatabasePermission(
 	ko := desired.ko.DeepCopy()
 	rm.setStatusDefaults(ko)
 
-	identityChanged := delta.DifferentAt("Spec.Principal.DataLakePrincipalIdentifier") ||
-		delta.DifferentAt("Spec.Resource.Database.CatalogID") ||
-		delta.DifferentAt("Spec.Resource.Database.Name")
-
 	err := permission.UpdatePermissions(
-		ctx, rm.sdkapi, rm.metrics, identityChanged,
-		grantTargetFor(latest.ko), grantTargetFor(desired.ko),
+		ctx, rm.sdkapi, rm.metrics, grantTargetFor(desired.ko),
 		desired.ko.Spec.Permissions, latest.ko.Spec.Permissions,
 		desired.ko.Spec.PermissionsWithGrantOption, latest.ko.Spec.PermissionsWithGrantOption,
 	)
@@ -64,17 +59,16 @@ func (rm *resourceManager) customUpdateDatabasePermission(
 // ackcompare sees a false identity change and Update takes the
 // revoke+regrant path against the wrong principal (reproduced live).
 //
-// bypassUnmanaged is true only on a CR's first-ever reconcile (no
-// ACKResourceMetadata yet), with no Condition on either side, when the
-// matched row already covers everything desired - e.g. the resource
-// creator's implicit ALL grant, or IAM_ALLOWED_PRINCIPALS' default ALL
-// grant under hybrid access mode. Without this, such a CR's first reconcile
-// hits ACK.Terminal "already exists, not managed by ACK" before any AWS
-// call (reproduced live), since the runtime treats any sdkFind match as a
-// pre-existing foreign resource unless the CR already has a finalizer.
-// Bypassing lets the normal Create path run instead, issuing a real,
-// additive GrantPermissions call. Any non-covering match, a Condition on
-// either side, or a later reconcile keeps today's Terminal behavior.
+// bypassUnmanaged is true only for the IAM_ALLOWED_PRINCIPALS pseudo-principal
+// on a CR's first-ever reconcile (no ACKResourceMetadata yet), with no
+// Condition on either side, when the matched row already covers everything
+// desired - its default ALL grant under hybrid access mode. Without this, a
+// CR targeting IAM_ALLOWED_PRINCIPALS hits ACK.Terminal "already exists, not
+// managed by ACK" before any AWS call (reproduced live). Scoped narrowly to
+// this one well-known pseudo-principal rather than any principal with a
+// covering grant, since that would overlap with ACK's adoption feature; a
+// CR whose target happens to be its resource's creator should use adoption
+// instead.
 //
 // Wrapping this in an rm method (instead of calling pkg/permission from the
 // hook template directly) sidesteps a goimports limitation: build-controller.sh's
@@ -96,7 +90,8 @@ func (rm *resourceManager) matchAndApplyPermissions(
 	if !ok {
 		return false, false
 	}
-	if firstReconcile && desiredCondition == nil && elem.Condition == nil &&
+	if firstReconcile && principalARN == "IAM_ALLOWED_PRINCIPALS" &&
+		desiredCondition == nil && elem.Condition == nil &&
 		permission.PermissionsCovered(desiredPermissions, permission.SDKPermissionsToStrings(elem.Permissions)) &&
 		permission.PermissionsCovered(desiredGrantable, permission.SDKPermissionsToStrings(elem.PermissionsWithGrantOption)) {
 		return true, true
@@ -111,12 +106,6 @@ func (rm *resourceManager) matchAndApplyPermissions(
 	ko.Spec.Permissions = permission.SDKPermissionsToStrings(elem.Permissions)
 	ko.Spec.PermissionsWithGrantOption = permission.SDKPermissionsToStrings(elem.PermissionsWithGrantOption)
 	return true, false
-}
-
-// setSelfHealAdvisory sets the shared self-heal Advisory condition on ko.
-// Wrapper method for the same goimports reason as matchAndApplyPermissions.
-func (rm *resourceManager) setSelfHealAdvisory(ko *svcapitypes.DatabasePermission) {
-	permission.SetSelfHealAdvisory(&resource{ko}, "DatabasePermission")
 }
 
 // grantTargetFor builds a permission.GrantTarget from a DatabasePermission's Spec.

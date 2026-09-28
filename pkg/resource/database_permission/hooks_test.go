@@ -30,7 +30,7 @@ func strSlice(vals ...string) []*string {
 	return out
 }
 
-func TestMatchAndApplyPermissions_FirstReconcile_CreatorImplicitAllGrant_Bypasses(t *testing.T) {
+func TestMatchAndApplyPermissions_FirstReconcile_CreatorImplicitAllGrant_NoBypass(t *testing.T) {
 	rm := &resourceManager{}
 	principalARN := "arn:aws:iam::123456789012:role/creator"
 	perms := []svcsdktypes.PrincipalResourcePermissions{
@@ -49,8 +49,8 @@ func TestMatchAndApplyPermissions_FirstReconcile_CreatorImplicitAllGrant_Bypasse
 		true, nil,
 		strSlice("DESCRIBE"), nil,
 	)
-	if !matched || !bypass {
-		t.Fatalf("expected matched=true bypass=true, got matched=%v bypass=%v", matched, bypass)
+	if !matched || bypass {
+		t.Fatalf("expected matched=true bypass=false, got matched=%v bypass=%v", matched, bypass)
 	}
 }
 

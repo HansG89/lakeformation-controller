@@ -80,7 +80,7 @@ func TestDiff_BothEmpty(t *testing.T) {
 	assertSameSet(t, removed, nil)
 }
 
-func TestDiff_IdentityChangedStyle_FullRevokeAndGrant(t *testing.T) {
+func TestDiff_FullSwap(t *testing.T) {
 	added, removed := Diff(strPtrSlice("SELECT", "DESCRIBE"), strPtrSlice("ALTER", "DROP"))
 	assertSameSet(t, added, []string{"SELECT", "DESCRIBE"})
 	assertSameSet(t, removed, []string{"ALTER", "DROP"})
@@ -194,8 +194,8 @@ func testTarget(name string) GrantTarget {
 func TestUpdatePermissions_PureAdd(t *testing.T) {
 	c := &fakeClient{}
 	target := testTarget("db")
-	err := UpdatePermissions(context.Background(), c, fakeMetrics{}, false,
-		target, target,
+	err := UpdatePermissions(context.Background(), c, fakeMetrics{},
+		target,
 		strPtrSlice("DESCRIBE", "ALTER"), strPtrSlice("DESCRIBE"),
 		nil, nil,
 	)
@@ -216,8 +216,8 @@ func TestUpdatePermissions_PureAdd(t *testing.T) {
 func TestUpdatePermissions_PureRemove(t *testing.T) {
 	c := &fakeClient{}
 	target := testTarget("db")
-	err := UpdatePermissions(context.Background(), c, fakeMetrics{}, false,
-		target, target,
+	err := UpdatePermissions(context.Background(), c, fakeMetrics{},
+		target,
 		strPtrSlice("DESCRIBE"), strPtrSlice("DESCRIBE", "ALTER"),
 		nil, nil,
 	)
@@ -238,8 +238,8 @@ func TestUpdatePermissions_PureRemove(t *testing.T) {
 func TestUpdatePermissions_Mixed(t *testing.T) {
 	c := &fakeClient{}
 	target := testTarget("db")
-	err := UpdatePermissions(context.Background(), c, fakeMetrics{}, false,
-		target, target,
+	err := UpdatePermissions(context.Background(), c, fakeMetrics{},
+		target,
 		strPtrSlice("DESCRIBE", "DROP"), strPtrSlice("DESCRIBE", "ALTER"),
 		nil, nil,
 	)
@@ -257,8 +257,8 @@ func TestUpdatePermissions_Mixed(t *testing.T) {
 func TestUpdatePermissions_NoOp(t *testing.T) {
 	c := &fakeClient{}
 	target := testTarget("db")
-	err := UpdatePermissions(context.Background(), c, fakeMetrics{}, false,
-		target, target,
+	err := UpdatePermissions(context.Background(), c, fakeMetrics{},
+		target,
 		strPtrSlice("DESCRIBE"), strPtrSlice("DESCRIBE"),
 		nil, nil,
 	)
@@ -268,42 +268,4 @@ func TestUpdatePermissions_NoOp(t *testing.T) {
 	if len(c.grantCalls) != 0 || len(c.revokeCalls) != 0 {
 		t.Fatalf("expected no API calls, got grant=%d revoke=%d", len(c.grantCalls), len(c.revokeCalls))
 	}
-}
-
-func TestUpdatePermissions_IdentityChanged(t *testing.T) {
-	c := &fakeClient{}
-	oldTarget := testTarget("old-db")
-	newTarget := testTarget("new-db")
-	err := UpdatePermissions(context.Background(), c, fakeMetrics{}, true,
-		oldTarget, newTarget,
-		strPtrSlice("SELECT", "DESCRIBE"), strPtrSlice("ALTER", "DROP"),
-		nil, nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(c.revokeCalls) != 1 {
-		t.Fatalf("expected 1 revoke call, got %d", len(c.revokeCalls))
-	}
-	if *c.revokeCalls[0].Resource.Database.Name != "old-db" {
-		t.Fatalf("expected revoke against old target, got %s", *c.revokeCalls[0].Resource.Database.Name)
-	}
-	assertSameSet(t, permStrs(c.revokeCalls[0].Permissions), []string{"ALTER", "DROP"})
-
-	if len(c.grantCalls) != 1 {
-		t.Fatalf("expected 1 grant call, got %d", len(c.grantCalls))
-	}
-	if *c.grantCalls[0].Resource.Database.Name != "new-db" {
-		t.Fatalf("expected grant against new target, got %s", *c.grantCalls[0].Resource.Database.Name)
-	}
-	assertSameSet(t, permStrs(c.grantCalls[0].Permissions), []string{"SELECT", "DESCRIBE"})
-}
-
-func permStrs(perms []svcsdktypes.Permission) []*string {
-	out := make([]*string, 0, len(perms))
-	for _, p := range perms {
-		s := string(p)
-		out = append(out, &s)
-	}
-	return out
 }

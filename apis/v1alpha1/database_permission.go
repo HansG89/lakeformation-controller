@@ -49,10 +49,12 @@ type DatabasePermissionSpec struct {
 	// Note that if you define a resource with a particular ARN, then later delete,
 	// and recreate a resource with that same ARN, the resource maintains the permissions
 	// already granted.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="Value is immutable once set"
 	// +kubebuilder:validation:Required
 	Principal *DataLakePrincipal `json:"principal"`
 	// The resource to which permissions are to be granted. Resources in Lake Formation
 	// are the Data Catalog, databases, and tables.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="Value is immutable once set"
 	// +kubebuilder:validation:Required
 	Resource *Resource `json:"resource"`
 }
